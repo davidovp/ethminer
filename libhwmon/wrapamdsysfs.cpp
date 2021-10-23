@@ -257,27 +257,16 @@ int wrap_amdsysfs_get_power_usage(wrap_amdsysfs_handle* sysfsh, int index, unsig
             return -1;
 
         int gpuindex = sysfsh->sysfs_device_id[index];
+		int hwmonindex = sysfsh->sysfs_hwmon_id[index];
+		if (hwmonindex < 0)
+        	return -1;
 
         char dbuf[120];
-        snprintf(dbuf, 120, "/sys/kernel/debug/dri/%d/amdgpu_pm_info", gpuindex);
+        snprintf(dbuf, 120, "/sys/class/drm/card%d/device/hwmon/hwmon%d/power1_average", gpuindex, hwmonindex);
+		getFileContentValue(dbuf, *milliwatts);
 
-        std::ifstream ifs(dbuf, std::ios::binary);
-        std::string line;
-
-        while (std::getline(ifs, line))
-        {
-            std::smatch sm;
-            std::regex regex(R"(([\d|\.]+) W \(average GPU\))");
-            if (std::regex_search(line, sm, regex))
-            {
-                if (sm.size() == 2)
-                {
-                    double watt = atof(sm.str(1).c_str());
-                    *milliwatts = (unsigned int)(watt * 1000);
-                    return 0;
-                }
-            }
-        }
+		*milliwatts = (unsigned int) *milliwatts / 1000.0;
+		return 0;
     }
     catch (const std::exception& ex)
     {
