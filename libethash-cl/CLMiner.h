@@ -36,6 +36,8 @@
 #define CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV 0x4001
 #endif
 
+extern bool g_exitOnNewEpoch;
+
 namespace dev
 {
 namespace eth

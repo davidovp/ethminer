@@ -354,6 +354,12 @@ void CLMiner::workLoop()
                 if (current.epoch != w.epoch)
                 {
                     DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() new epoch");
+                    if (current.epoch != -1 && g_exitOnNewEpoch)
+                    {
+                        std::cerr << "Epoch change, miner exit!" << std::endl;
+                        raise(SIGTERM);
+                    }
+
                     m_abortqueue.clear();
                     if (!initEpoch()) {
                         DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() initEpoch failed!");
