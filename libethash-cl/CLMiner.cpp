@@ -5,6 +5,7 @@
 
 #include <boost/dll.hpp>
 
+#include <libdevcore/Log.h>
 #include <libethcore/Farm.h>
 #include <ethash/ethash.hpp>
 
@@ -287,6 +288,8 @@ struct SearchResults
 
 void CLMiner::workLoop()
 {
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() begin");
+
     // Memory for zero-ing buffers. Cannot be static or const because crashes on macOS.
     uint32_t zerox3[3] = {0, 0, 0};
 
@@ -350,10 +353,12 @@ void CLMiner::workLoop()
 
                 if (current.epoch != w.epoch)
                 {
+                    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() new epoch");
                     m_abortqueue.clear();
-
-                    if (!initEpoch())
+                    if (!initEpoch()) {
+                        DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() initEpoch failed!");
                         break;  // This will simply exit the thread
+                    }
 
                     m_abortqueue.push_back(cl::CommandQueue(m_context[0], m_device));
                 }
@@ -440,6 +445,8 @@ void CLMiner::workLoop()
 
 void CLMiner::kick_miner()
 {
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::kick_miner() begin");
+
     // Memory for abort Cannot be static because crashes on macOS.
     const uint32_t one = 1;
     if (!m_settings.noExit && !m_abortqueue.empty())
@@ -447,10 +454,14 @@ void CLMiner::kick_miner()
             m_searchBuffer[0], CL_TRUE, offsetof(SearchResults, abort), sizeof(one), &one);
 
     m_new_work_signal.notify_one();
+
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::kick_miner() end");
 }
 
 void CLMiner::enumDevices(std::map<string, DeviceDescriptor>& _DevicesCollection)
 {
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::enumDevices() begin");
+
     // Load available platforms
     vector<cl::Platform> platforms = getPlatforms();
     if (platforms.empty())
@@ -601,6 +612,7 @@ void CLMiner::enumDevices(std::map<string, DeviceDescriptor>& _DevicesCollection
 
 bool CLMiner::initDevice()
 {
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::initDevice() begin");
 
     // LookUp device
     // Load available platforms
@@ -707,27 +719,38 @@ bool CLMiner::initDevice()
 
 bool CLMiner::initEpoch_internal()
 {
+    DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::initEpoch_internal() begin");
+
     auto startInit = std::chrono::steady_clock::now();
-    size_t RequiredMemory = (m_epochContext.dagSize);
+    size_t RequiredDagMemory = m_epochContext.dagSize;
+    size_t RequiredTotalMemory = (m_epochContext.dagSize + m_epochContext.lightSize);
 
     // Release the pause flag if any
     resume(MinerPauseEnum::PauseDueToInsufficientMemory);
     resume(MinerPauseEnum::PauseDueToInitEpochError);
 
+    bool light_on_host = false;
+
     // Check whether the current device has sufficient memory every time we recreate the dag
-    if (m_deviceDescriptor.totalMemory < RequiredMemory)
+    if (m_deviceDescriptor.totalMemory < RequiredTotalMemory)
     {
-        cllog << "Epoch " << m_epochContext.epochNumber << " requires "
-              << dev::getFormattedMemory((double)RequiredMemory) << " memory. Only "
-              << dev::getFormattedMemory((double)m_deviceDescriptor.totalMemory)
-              << " available on device.";
-        pause(MinerPauseEnum::PauseDueToInsufficientMemory);
-        return true;  // This will prevent to exit the thread and
-                      // Eventually resume mining when changing coin or epoch (NiceHash)
+        if (m_deviceDescriptor.totalMemory < RequiredDagMemory)
+        {
+            cllog << "Epoch " << m_epochContext.epochNumber << " requires "
+                  << dev::getFormattedMemory((double)RequiredDagMemory) << " memory. Only "
+                  << dev::getFormattedMemory((double)m_deviceDescriptor.totalMemory)
+                  << " available on device.";
+            cllog << "Device has insufficient memory. Mining suspended ...";
+            pause(MinerPauseEnum::PauseDueToInsufficientMemory);
+            return true;  // This will prevent to exit the thread and
+                          // Eventually resume mining when changing coin or epoch (NiceHash)
+        }
+        else
+            light_on_host = true;
     }
 
-    cllog << "Generating split DAG + Light (total): "
-          << dev::getFormattedMemory((double)RequiredMemory);
+    cllog << "Generating DAG + Light (on " << (light_on_host ? "host" : "GPU")
+            << ") : " << dev::getFormattedMemory((double)RequiredTotalMemory);
 
     try
     {
@@ -860,10 +883,7 @@ bool CLMiner::initEpoch_internal()
         try
         {
             cllog << "Creating DAG buffer, size: "
-                  << dev::getFormattedMemory((double)m_epochContext.dagSize)
-                  << ", free: "
-                  << dev::getFormattedMemory(
-                         (double)(m_deviceDescriptor.totalMemory - RequiredMemory));
+                  << dev::getFormattedMemory((double)m_epochContext.dagSize);
             m_dag.clear();
             if (m_epochContext.dagNumItems & 1)
             {
@@ -882,7 +902,6 @@ bool CLMiner::initEpoch_internal()
             cllog << "Creating light cache buffer, size: "
                   << dev::getFormattedMemory((double)m_epochContext.lightSize);
             m_light.clear();
-            bool light_on_host = false;
             try
             {
                 m_light.emplace_back(m_context[0], CL_MEM_READ_ONLY, m_epochContext.lightSize);
@@ -966,10 +985,15 @@ bool CLMiner::initEpoch_internal()
             m_queue[0].finish();
         }
 
-        auto dagTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startInit);
-        cllog << dev::getFormattedMemory((double)m_epochContext.dagSize)
-              << " of DAG data generated in "
-              << dagTime.count() << " ms.";
+        cllog << "Generated DAG + Light in "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - startInit).count()
+                << " ms. "
+                << dev::getFormattedMemory(
+                    light_on_host ? (double)(m_deviceDescriptor.totalMemory - RequiredDagMemory) :
+                                    (double)(m_deviceDescriptor.totalMemory - RequiredTotalMemory))
+                << " left.";              
+                    
     }
     catch (cl::Error const& err)
     {
