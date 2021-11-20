@@ -354,10 +354,16 @@ void CLMiner::workLoop()
                 if (current.epoch != w.epoch)
                 {
                     DEV_BUILD_LOG_PROGRAMFLOW(cnote, "CLMiner::workLoop() new epoch");
-                    if (current.epoch != -1 && g_exitOnNewEpoch)
+                    if (current.epoch != -1)
                     {
-                        std::cerr << "Epoch change, miner exit!" << std::endl;
-                        raise(SIGTERM);
+                        if (!g_exitOnNewEpoch) {
+                            cllog << "New epoch " << w.epoch << " detected.";
+                        } else {
+                            cllog << "New epoch transition " << current.epoch << " -> " << w.epoch << 
+                                " detected, terminating due to --exit-new-epoch";
+                            raise(SIGTERM);
+                            break;  // This will simply exit the thread
+                        }
                     }
 
                     m_abortqueue.clear();
