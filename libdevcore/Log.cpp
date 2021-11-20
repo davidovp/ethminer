@@ -60,7 +60,7 @@ LogOutputStreamBase::LogOutputStreamBase(char const* _id)
         {
             time_t rawTime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
             char buf[24];
-            if (strftime(buf, 24, "%X", localtime(&rawTime)) == 0)
+            if (strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&rawTime)) == 0)
                 buf[0] = '\0';  // empty if case strftime fails
             m_sstr << _id << " " EthViolet << buf << " " EthBlue << std::left << std::setw(8)
                    << getThreadName() << " " EthReset;
